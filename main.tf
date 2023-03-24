@@ -94,25 +94,7 @@ resource "google_storage_bucket" "destination_bucket" {
 
 
 
-resource "google_workflows_workflow" "workflow_bucket_copy" {
-  name            = "workflow_bucket_copy"
-  project         = module.project-services.project_id
-  region          = "us-central1"
-  description     = "Copy data files from public bucket to solution project"
-  service_account = google_service_account.workflows_sa.email
-  source_contents = file("${path.module}/assets/yaml/bucket_copy.yaml")
-   depends_on = [
-  google_project_iam_member.workflow_service_account_invoke_role,
-  google_project_iam_member.workflows_sa_bq_read,
-  google_project_iam_member.workflows_sa_bq_data,
-  google_project_iam_member.workflows_sa_gcs_admin,
-  google_project_iam_member.workflows_sa_bq_resource_mgr,
-  google_project_iam_member.workflow_service_account_token_role,
-  google_project_iam_member.workflows_sa_bq_connection,
-  google_project_iam_member.workflows_sa_log_writer,
-  time_sleep.wait_roles_activate
-  ]
-}
+
 
 resource "google_project_service_identity" "workflows" {
   provider   = google-beta
@@ -214,12 +196,6 @@ resource "time_sleep" "wait_roles_activate" {
   create_duration = "30s"
 }
 
-resource "time_sleep" "wait_after_bucket_copy" {
-  create_duration = "1s"
-  depends_on = [
-    data.http.call_workflows_bucket_copy_run
-  ]  
-}
 
 output "workflow_return_bucket_copy" {
   value = data.http.call_workflows_bucket_copy_run.response_body
@@ -233,6 +209,26 @@ output "workflow_return_bucket_copy" {
 #    google_storage_bucket.destination_bucket,
 #  ]  
 #}
+
+resource "google_workflows_workflow" "workflow_bucket_copy" {
+  name            = "workflow_bucket_copy"
+  project         = module.project-services.project_id
+  region          = "us-central1"
+  description     = "Copy data files from public bucket to solution project"
+  service_account = google_service_account.workflows_sa.email
+  source_contents = file("${path.module}/assets/yaml/bucket_copy.yaml")
+   depends_on = [
+  google_project_iam_member.workflow_service_account_invoke_role,
+  google_project_iam_member.workflows_sa_bq_read,
+  google_project_iam_member.workflows_sa_bq_data,
+  google_project_iam_member.workflows_sa_gcs_admin,
+  google_project_iam_member.workflows_sa_bq_resource_mgr,
+  google_project_iam_member.workflow_service_account_token_role,
+  google_project_iam_member.workflows_sa_bq_connection,
+  google_project_iam_member.workflows_sa_log_writer,
+  time_sleep.wait_roles_activate
+  ]
+}
 
 resource "google_workflows_workflow" "workflows_create_gcp_biglake_tables" {
   name            = "workflow-create-gcp-biglake-tables"
@@ -267,4 +263,26 @@ data "http" "call_workflows_bucket_copy_run" {
   request_headers = {
     Accept = "application/json"
   Authorization = "Bearer ${data.google_client_config.current.access_token}" }
+   depends_on = [
+        google_workflows_workflow.workflow_bucket_copy
+
+  ]
+}
+
+resource "time_sleep" "wait_after_workflow_bucket_copy" {
+  create_duration = "15s"
+  depends_on = [
+    data.http.call_workflows_bucket_copy_run
+  ]  
+}
+
+data "http" "call_workflows_create_gcp_biglake_tables" {
+  url = "https://workflowexecutions.googleapis.com/v1/projects/${module.project-services.project_id}/locations/${var.region}/workflows/${google_workflows_workflow.workflows_create_gcp_biglake_tables.name}/executions"
+  method = "POST"
+  request_headers = {
+    Accept = "application/json"
+  Authorization = "Bearer ${data.google_client_config.current.access_token}" }
+   depends_on = [
+        time_sleep.wait_after_workflow_bucket_copy,
+  ]
 }
